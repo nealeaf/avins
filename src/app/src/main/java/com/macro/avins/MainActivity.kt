@@ -4,31 +4,35 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
-import android.graphics.ImageFormat
-import android.graphics.SurfaceTexture
+import android.graphics.Bitmap
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
+import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.CaptureResult
+import android.hardware.camera2.TotalCaptureResult
 import android.media.ImageReader
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
-import android.view.Surface
-import android.view.TextureView
+import android.view.PixelCopy
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import com.macro.avins.databinding.ActivityMainBinding
-import java.util.Arrays
 
 
-class MainActivity : AppCompatActivity(), SensorEventListener, TextureView.SurfaceTextureListener {
+class MainActivity : AppCompatActivity(), SensorEventListener {
+
+    private val Tag: String = "avins"
 
     private lateinit var mSensorManager: SensorManager
     private lateinit var mAccel: Sensor
@@ -40,8 +44,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener, TextureView.Surfa
     private lateinit var mCameraId: String
     private lateinit var mCameraDevice: CameraDevice
     private lateinit var mCaptureRequestBuilder: CaptureRequest.Builder
+    private lateinit var mSurfaceView: SurfaceView
     private lateinit var mImageReader: ImageReader
-    private lateinit var mTextureView: TextureView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,8 +66,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener, TextureView.Surfa
         mSensorManager.registerListener(this, mAccel, SensorManager.SENSOR_DELAY_UI);
         mSensorManager.registerListener(this, mGyro, SensorManager.SENSOR_DELAY_UI);
 
-        mTextureView = findViewById(R.id.textureView);
-        mTextureView.surfaceTextureListener = this;
+        mSurfaceView = findViewById(R.id.surfaceView);
+        mSurfaceView.holder.addCallback(mSurfaceCallback);
 
         mBackgroundThread = HandlerThread("CameraBackground");
         mBackgroundThread.start();
@@ -80,25 +84,38 @@ class MainActivity : AppCompatActivity(), SensorEventListener, TextureView.Surfa
             e.printStackTrace();
         }
     }
+    private val mSurfaceCallback = object : SurfaceHolder.Callback {
+        override fun surfaceCreated(holder: SurfaceHolder) {
+            StartCamera(mSurfaceView.width, mSurfaceView.height);
+        }
 
-    override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
-        StartCamera(width, height);
+        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        }
+
+        override fun surfaceDestroyed(holder: SurfaceHolder) {
+        }
     }
 
-    override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {
-    }
+    val mRequestCallback = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureProgressed(session: CameraCaptureSession,
+        request: CaptureRequest,
+        partialResult: CaptureResult) {
+        }
 
-    override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
-        return true;
-    }
-
-    override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {
-    }
-
-    val mOnImageAvailableListener = ImageReader.OnImageAvailableListener() {
-        fun onImageAvailable(reader: ImageReader) {
-            Log.e("imagereader", "onImageAvailable");
-            reader.acquireLatestImage()?.close()
+        override fun onCaptureCompleted(
+            session: CameraCaptureSession,
+            request: CaptureRequest,
+            result: TotalCaptureResult) {
+            val timeStamp = result[CaptureResult.SENSOR_TIMESTAMP]!!
+            val mScreenBitmap = Bitmap.createBitmap(mSurfaceView.width, mSurfaceView.height, Bitmap.Config.ARGB_8888);
+            Log.d(Tag, "request complete: $timeStamp")
+            super.onCaptureCompleted(session, request, result)
+            PixelCopy.request(mSurfaceView, mScreenBitmap,
+                { copyResult ->
+                    if (PixelCopy.SUCCESS == copyResult) {
+                        Log.d(Tag,"SUCCESS ");
+                    }
+                }, mBackgroundHandler);
         }
     }
 
@@ -109,26 +126,23 @@ class MainActivity : AppCompatActivity(), SensorEventListener, TextureView.Surfa
 
             session.setRepeatingRequest(
                 mCaptureRequestBuilder.build(),
-                null,
+                mRequestCallback,
                 mBackgroundHandler
             )
         }
     }
 
-    var mCameraCallback = object : CameraDevice.StateCallback() {
+    private var mCameraCallback = object : CameraDevice.StateCallback() {
         override fun onOpened(camera: CameraDevice) {
             mCameraDevice = camera
             mCaptureRequestBuilder =
                 mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
 
-            var previewTexture = mTextureView.getSurfaceTexture();
-            previewTexture?.setDefaultBufferSize(mTextureView.width, mTextureView.height);
-            var previewSurface = Surface(previewTexture);
-            mCaptureRequestBuilder.addTarget(previewSurface)
-            mCaptureRequestBuilder.addTarget(mImageReader.surface)
+            mCaptureRequestBuilder.addTarget(mSurfaceView.holder.surface)
+//            mCaptureRequestBuilder.addTarget(mImageReader.surface)
 
             mCameraDevice.createCaptureSession(
-                Arrays.asList(mImageReader.surface, previewSurface),
+                listOf(mSurfaceView.holder.surface),
                 mCaptureCallback,
                 mBackgroundHandler
             )
@@ -143,23 +157,30 @@ class MainActivity : AppCompatActivity(), SensorEventListener, TextureView.Surfa
         }
     }
 
+    private val mOnImageAvailableListener =
+        ImageReader.OnImageAvailableListener { Log.d(Tag, "image read") }
+
     private fun StartCamera(width: Int, height: Int) {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             //Toast.makeText(this,"Lacking privileges to access camera service, please request permission first",Toast.LENGTH_SHORT).show();
-            Log.e("customCarmeraActivity.openCamera","Lacking privileges to access camera service, please request permission first");
+            Log.e(Tag,"Lacking privileges to access camera service, please request permission first");
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 123);
             return;
         }
 
         mCameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        mImageReader = ImageReader.newInstance(width, height, ImageFormat.YUV_420_888, 2)
-        mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mBackgroundHandler)
+//        mImageReader = ImageReader.newInstance(width, height,  PixelFormat.RGBA_8888, 3)
+//        mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mBackgroundHandler)
 
         try {
             if (mCameraManager.cameraIdList.isEmpty()) {
                 return
             }
             mCameraId = mCameraManager.cameraIdList[0]
+
+            val characteristics = mCameraManager.getCameraCharacteristics(mCameraId)
+            val fpsRange = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+            Log.d(Tag, "fps: " + (fpsRange?.get(0) ?: 0))
 
             mCameraManager.openCamera(
                 mCameraId,
@@ -180,22 +201,19 @@ class MainActivity : AppCompatActivity(), SensorEventListener, TextureView.Surfa
             buffer.append("gyr: ")
         }
         buffer.append(String.format("%s-%.2f,%.2f,%.2f",event.timestamp.toString(), event.values[0], event.values[1], event.values[2]))
-//        Log.i("sensor: ", buffer.toString())
+        Log.d(Tag, buffer.toString())
 
     }
 
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
-        Log.d("Not yet implemented", "")
-    }
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     /**
      * A native method that is implemented by the 'avins' native library,
      * which is packaged with this application.
      */
-    external fun stringFromJNI(): String
+    private external fun stringFromJNI(): String
 
     companion object {
-        // Used to load the 'avins' library on application startup.
         init {
             System.loadLibrary("avins")
         }
