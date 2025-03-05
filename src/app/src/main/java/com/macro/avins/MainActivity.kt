@@ -32,7 +32,7 @@ import com.macro.avins.databinding.ActivityMainBinding
 
 class MainActivity : AppCompatActivity(), SensorEventListener {
 
-    private val Tag: String = "avins"
+    private val Tag: String = "avinsmain"
 
     private lateinit var mSensorManager: SensorManager
     private lateinit var mAccel: Sensor
@@ -45,7 +45,10 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     private lateinit var mCameraDevice: CameraDevice
     private lateinit var mCaptureRequestBuilder: CaptureRequest.Builder
     private lateinit var mSurfaceView: SurfaceView
-    private lateinit var mImageReader: ImageReader
+//    private lateinit var mImageReader: ImageReader
+
+    private var timestampImu: Long = 0
+    private var arrImu: FloatArray = floatArrayOf(0F, 0F, 0F, 0F, 0F, 0F)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -113,7 +116,9 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             PixelCopy.request(mSurfaceView, mScreenBitmap,
                 { copyResult ->
                     if (PixelCopy.SUCCESS == copyResult) {
-                        Log.d(Tag,"SUCCESS ");
+                        pushImage(timeStamp, mScreenBitmap);
+                        Log.d(Tag,"push bitmap ");
+                        mScreenBitmap.recycle();
                     }
                 }, mBackgroundHandler);
         }
@@ -193,15 +198,27 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
     @SuppressLint("DefaultLocale")
     override fun onSensorChanged(event: SensorEvent) {
-        val buffer = StringBuffer()
+        if (timestampImu != event.timestamp) {
+            timestampImu = event.timestamp
+            arrImu = floatArrayOf(0F, 0F, 0F, 0F, 0F, 0F)
+        }
+
         if (event.sensor == mAccel) {
-            buffer.append("acc: ")
+            arrImu[0] = event.values[0]
+            arrImu[1] = event.values[1]
+            arrImu[2] = event.values[2]
         }
         else if(event.sensor == mGyro) {
-            buffer.append("gyr: ")
+            arrImu[3] = event.values[0]
+            arrImu[4] = event.values[1]
+            arrImu[5] = event.values[2]
         }
-        buffer.append(String.format("%s-%.2f,%.2f,%.2f",event.timestamp.toString(), event.values[0], event.values[1], event.values[2]))
-        Log.d(Tag, buffer.toString())
+        if (arrImu[3] != 0F) {
+            pushImu(timestampImu, arrImu[0], arrImu[1], arrImu[2], arrImu[3], arrImu[4], arrImu[5])
+
+            Log.d(Tag, String.format("%s-%.2f,%.2f,%.2f,%.2f,%.2f,%.2f",timestampImu,
+                arrImu[0], arrImu[1], arrImu[2], arrImu[3], arrImu[4], arrImu[5]))
+        }
 
     }
 
@@ -212,6 +229,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
      * which is packaged with this application.
      */
     private external fun stringFromJNI(): String
+    private external fun pushImage(timestamp:Long, bitmap: Bitmap): Int
+    private external fun pushImu(timestamp:Long, accX:Float, accY:Float, accZ:Float, gyrX:Float, gyrY:Float,gyrZ:Float): Int
 
     companion object {
         init {
